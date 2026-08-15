@@ -1,36 +1,44 @@
-import { ref } from 'vue'
-import apis from '@/services/apis'
 import { defineStore } from 'pinia'
+import { StoresEnum } from '@/enums'
 import type { UserInfoType } from '@/services/types'
+import { getUserDetail } from '@/utils/ImRequestUtils'
+import * as PathUtil from '@/utils/PathUtil'
+import { useGlobalStore } from './global'
 
-export const useUserStore = defineStore('user', () => {
-  const userInfo = ref<Partial<UserInfoType>>({})
-  const isSign = ref(false)
+export const useUserStore = defineStore(
+  StoresEnum.USER,
+  () => {
+    const userInfo = ref<UserInfoType>()
+    const globalStore = useGlobalStore()
 
-  let localUserInfo = {}
-  try {
-    localUserInfo = JSON.parse(localStorage.getItem('USER_INFO') || '{}')
-  } catch (error) {
-    localUserInfo = {}
+    const getUserDetailAction = () => {
+      getUserDetail()
+        .then((res: any) => {
+          userInfo.value = { ...userInfo.value, ...res }
+        })
+        .catch((e) => {
+          console.error('获取用户详情失败:', e)
+        })
+    }
+
+    const isMe = computed(() => (id: string) => {
+      return userInfo.value?.uid === id
+    })
+
+    const getUserRoomDir = async () => {
+      return await PathUtil.getUserVideosDir(userInfo.value!.uid, globalStore.currentSessionRoomId)
+    }
+
+    const getUserRoomAbsoluteDir = async () => {
+      return await PathUtil.getUserAbsoluteVideosDir(userInfo.value!.uid, globalStore.currentSessionRoomId)
+    }
+
+    return { userInfo, getUserDetailAction, isMe, getUserRoomDir, getUserRoomAbsoluteDir }
+  },
+  {
+    share: {
+      enable: true,
+      initialize: true
+    }
   }
-
-  // 从 local读取
-  if (!Object.keys(userInfo.value).length && Object.keys(localUserInfo).length) {
-    userInfo.value = localUserInfo
-  }
-
-  function getUserDetailAction() {
-    apis
-      .getUserDetail()
-      .then((res) => {
-        userInfo.value = { ...userInfo.value, ...res.data.data }
-      })
-      .catch(() => {
-        // 删除缓存
-        localStorage.removeItem('TOKEN')
-        localStorage.removeItem('USER_INFO')
-      })
-  }
-
-  return { userInfo, isSign, getUserDetailAction }
-})
+)

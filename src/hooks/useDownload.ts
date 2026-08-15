@@ -1,64 +1,74 @@
-import { ref } from 'vue'
+import { BaseDirectory, exists, mkdir, writeFile } from '@tauri-apps/plugin-fs'
 import { createEventHook } from '@vueuse/core'
+import { isMobile } from '@/utils/PlatformConstants'
 
 export const useDownload = () => {
   const process = ref(0)
   const isDownloading = ref(false)
-
   const { on: onLoaded, trigger } = createEventHook()
 
-  const getFileExtension = (url: string) => {
-    const pathname = new URL(url).pathname
-    const lastDotIndex = pathname.lastIndexOf('.')
-    if (lastDotIndex === -1) {
-      return ''
-    }
-    return pathname.slice(lastDotIndex + 1)
-  }
-
-  const getFileName = (url: string) => {
-    const pathname = new URL(url).pathname
-    const lastDotIndex = pathname.lastIndexOf('/')
-    if (lastDotIndex === -1) {
-      return '未知文件'
-    }
-    return pathname.slice(lastDotIndex + 1)
-  }
-
-  const downloadFile = (url: string, filename?: string, extension?: string) => {
-    isDownloading.value = true
-    const xhr = new XMLHttpRequest()
-    xhr.open('GET', url, true)
-    xhr.responseType = 'blob'
-    xhr.onprogress = (event) => {
-      if (event.lengthComputable) {
-        process.value = Math.floor((event.loaded / event.total) * 100)
-      }
-    }
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        const blob = new Blob([xhr.response], { type: 'application/octet-stream' })
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        const urlExtension = getFileExtension(url)
-        const ext = extension || urlExtension
-        if (filename) {
-          a.download = `${filename}${ext ? '.' : ''}${ext}`
-        } else {
-          a.download = getFileName(url)
-        }
-        a.click()
-        // 调用 URL.revokeObjectURL() 方法来释放该内存
-        URL.revokeObjectURL(a.href)
-        trigger('success')
-      } else {
-        trigger('fail')
-      }
-      // 清空进度
+  const downloadFile = async (
+    url: string,
+    savePath: string,
+    baseDir: BaseDirectory = isMobile() ? BaseDirectory.AppData : BaseDirectory.AppCache
+  ) => {
+    try {
+      isDownloading.value = true
       process.value = 0
+
+      // 确保目录存在
+      const dirPath = savePath.substring(0, savePath.lastIndexOf('/'))
+      if (dirPath) {
+        const dirExists = await exists(dirPath, { baseDir })
+        if (!dirExists) {
+          await mkdir(dirPath, { baseDir, recursive: true })
+        }
+      }
+
+      const response = await fetch(url)
+      if (!response.ok) {
+        return window.$message.error('下载失败')
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        return window.$message.error('无法读取响应内容')
+      }
+
+      const contentLength = Number(response.headers.get('Content-Length')) || 0
+      const chunks: Uint8Array[] = []
+      let receivedLength = 0
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        chunks.push(value)
+        receivedLength += value.length
+
+        if (contentLength) {
+          process.value = Math.floor((receivedLength / contentLength) * 100)
+        }
+      }
+
+      const allChunks = new Uint8Array(receivedLength)
+      let position = 0
+      for (const chunk of chunks) {
+        allChunks.set(chunk, position)
+        position += chunk.length
+      }
+
+      await writeFile(savePath, allChunks, { baseDir })
+      trigger('success')
+    } catch (error) {
+      console.error('下载失败:', error)
+      trigger('fail')
+      throw error
+    } finally {
       isDownloading.value = false
+      process.value = 0
     }
-    xhr.send()
   }
 
   return {

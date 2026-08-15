@@ -1,101 +1,204 @@
 import { defineStore } from 'pinia'
-import { CloseBxEnum, StoresEnum, ThemeEnum } from '@/enums'
-import apis from '@/services/apis.ts'
-import { isDiffNow10Min } from '@/utils/ComputedTime.ts'
-import type { CacheBadgeItem } from '@/services/types.ts'
+import { CloseBxEnum, ShowModeEnum, StoresEnum, ThemeEnum } from '@/enums'
+import { isDesktop, isMac } from '@/utils/PlatformConstants'
+import { setTheme } from '@tauri-apps/api/app'
+import type { Theme } from '@tauri-apps/api/window'
 
-const badgeCachedList = reactive<Record<number, Partial<CacheBadgeItem>>>({})
-// TODO 使用indexDB或者把配置写出到文件中，还需要根据每个账号来进行配置 (nyh -> 2024-03-26 01:22:12)
-export const setting = defineStore(StoresEnum.SETTING, {
+// 获取平台对应的默认快捷键
+const getDefaultShortcuts = () => {
+  return {
+    screenshot: isMac() ? 'Cmd+Ctrl+H' : 'Ctrl+Alt+H',
+    openMainPanel: isMac() ? 'Cmd+Ctrl+P' : 'Ctrl+Alt+P',
+    globalEnabled: false // 默认关闭全局快捷键
+  }
+}
+
+const normalizeTheme = (theme: string) => {
+  if (theme === ThemeEnum.DARK) return ThemeEnum.DARK
+  if (theme === ThemeEnum.LIGHT) return ThemeEnum.LIGHT
+  return ThemeEnum.LIGHT
+}
+
+const resolveOsTheme = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return ThemeEnum.LIGHT
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? ThemeEnum.DARK : ThemeEnum.LIGHT
+}
+
+const setDocumentTheme = (theme: string) => {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.theme = theme
+}
+
+// TODO 使用indexDB或sqlite缓存数据，还需要根据每个账号来进行配置 (nyh -> 2024-03-26 01:22:12)
+const isDesktopComputed = computed(() => isDesktop())
+export const useSettingStore = defineStore(StoresEnum.SETTING, {
   state: (): STO.Setting => ({
-    /** 主题设置 */
     themes: {
       content: '',
-      pattern: ''
+      pattern: ThemeEnum.OS,
+      versatile: isDesktopComputed.value ? 'default' : 'simple'
     },
-    /** 是否启用ESC关闭窗口 */
     escClose: true,
-    /** 系统托盘 */
+    showMode: ShowModeEnum.ICON,
+    lockScreen: {
+      enable: false,
+      password: ''
+    },
     tips: {
       type: CloseBxEnum.HIDE,
       notTips: false
     },
-    /** 登录设置 */
     login: {
       autoLogin: false,
-      autoStartup: false,
-      /** 用户保存的登录信息 */
-      accountInfo: {
-        account: '',
-        password: '',
-        name: '',
-        avatar: '',
-        uid: 0,
-        token: ''
-      },
-      badgeList: []
+      autoStartup: false
     },
-    /** 聊天设置 */
     chat: {
-      /** 发送快捷键 */
       sendKey: 'Enter',
-      /** 是否双击打开独立会话窗口 */
-      isDouble: true
+      isDouble: true,
+      translate: 'youdao'
+    },
+    shortcuts: getDefaultShortcuts(),
+    page: {
+      shadow: true,
+      fonts: 'PingFang',
+      blur: true,
+      lang: 'AUTO'
+    },
+    update: {
+      dismiss: ''
+    },
+    screenshot: {
+      isConceal: false
+    },
+    notification: {
+      messageSound: true,
+      volume: 80
     }
   }),
   actions: {
     /** 初始化主题 */
     initTheme(theme: string) {
-      this.themes.content = theme
-      document.documentElement.dataset.theme = theme
-      this.themes.pattern = theme
+      const nextPattern = theme === ThemeEnum.OS ? ThemeEnum.OS : normalizeTheme(theme)
+      const nextContent = theme === ThemeEnum.OS ? resolveOsTheme() : normalizeTheme(theme)
+      this.$patch((state) => {
+        state.themes.pattern = nextPattern
+        state.themes.content = nextContent
+      })
+      setDocumentTheme(nextContent)
+      setTheme(Object.is(theme, 'os') ? null : (theme as Theme))
     },
     /** 切换主题 */
     toggleTheme(theme: string) {
+      setTheme(Object.is(theme, 'os') ? null : (theme as Theme))
       if (theme === ThemeEnum.OS) {
-        this.themes.pattern = theme
-        const os = matchMedia('(prefers-color-scheme: dark)').matches ? ThemeEnum.DARK : ThemeEnum.LIGHT
-        document.documentElement.dataset.theme = os
-        this.themes.content = os
-      } else {
-        this.themes.content = theme
-        document.documentElement.dataset.theme = theme
-        this.themes.pattern = theme
+        const os = resolveOsTheme()
+        this.$patch((state) => {
+          state.themes.pattern = ThemeEnum.OS
+          state.themes.content = os
+        })
+        setDocumentTheme(os)
+        return
       }
+      const nextTheme = normalizeTheme(theme)
+      this.$patch((state) => {
+        state.themes.pattern = nextTheme
+        state.themes.content = nextTheme
+      })
+      setDocumentTheme(nextTheme)
+    },
+    /** 同步系统主题到内容（仅在跟随系统时生效） */
+    syncOsTheme() {
+      if (this.themes.pattern !== ThemeEnum.OS) return
+      const os = resolveOsTheme()
+      if (this.themes.content !== os) {
+        this.$patch((state) => {
+          state.themes.content = os
+        })
+      }
+      setDocumentTheme(os)
+    },
+    /** 兜底修正主题状态 */
+    normalizeThemeState() {
+      if (this.themes.pattern === ThemeEnum.OS) {
+        this.syncOsTheme()
+        return
+      }
+      const nextTheme = normalizeTheme(this.themes.pattern || this.themes.content)
+      if (this.themes.pattern !== nextTheme || this.themes.content !== nextTheme) {
+        this.$patch((state) => {
+          state.themes.pattern = nextTheme
+          state.themes.content = nextTheme
+        })
+      }
+      setDocumentTheme(nextTheme)
     },
     /** 切换登录设置 */
     toggleLogin(autoLogin: boolean, autoStartup: boolean) {
       this.login.autoLogin = autoLogin
       this.login.autoStartup = autoStartup
     },
-    /** 设置用户保存的登录信息 */
-    setAccountInfo(accountInfo: STO.Setting['login']['accountInfo']) {
-      this.login.accountInfo = accountInfo
+
+    setAutoLogin(autoLogin: boolean) {
+      this.login.autoLogin = autoLogin
     },
-    /** 批量获取用户徽章详细信息 */
-    async getBatchBadgeInfo(itemIds: number[]) {
-      // 没有 lastModifyTime 的要更新，lastModifyTime 距离现在 10 分钟已上的也要更新
-      const result = itemIds
-        .map((itemId) => {
-          const cacheBadge = badgeCachedList[itemId]
-          return { itemId, lastModifyTime: cacheBadge?.lastModifyTime }
-        })
-        .filter((item) => !item.lastModifyTime || isDiffNow10Min(item.lastModifyTime))
-      if (!result.length) return
-      const { data } = await apis.getBadgesBatch(result)
-      data?.forEach(
-        (item: CacheBadgeItem) =>
-          // 更新最后更新时间。
-          (badgeCachedList[item.itemId] = {
-            ...(item?.needRefresh ? item : badgeCachedList[item.itemId]),
-            needRefresh: void 0,
-            lastModifyTime: Date.now()
-          })
-      )
+    /** 设置菜单显示模式 */
+    setShowMode(showMode: ShowModeEnum) {
+      this.showMode = showMode
     },
-    /** 清空账号信息 */
-    clearAccount() {
-      this.login.accountInfo.password = ''
+    /** 设置截图快捷键 */
+    setScreenshotShortcut(shortcut: string) {
+      if (!this.shortcuts) {
+        this.shortcuts = getDefaultShortcuts()
+      }
+      this.shortcuts.screenshot = shortcut
+    },
+    /** 设置打开主面板快捷键 */
+    setOpenMainPanelShortcut(shortcut: string) {
+      if (!this.shortcuts) {
+        this.shortcuts = getDefaultShortcuts()
+      }
+      this.shortcuts.openMainPanel = shortcut
+    },
+    /** 设置发送消息快捷键 */
+    setSendMessageShortcut(shortcut: string) {
+      if (!this.chat) {
+        this.chat = { sendKey: 'Enter', isDouble: true, translate: 'youdao' }
+      }
+      this.chat.sendKey = shortcut
+    },
+    /** 设置全局快捷键开关状态 */
+    setGlobalShortcutEnabled(enabled: boolean) {
+      if (!this.shortcuts) {
+        this.shortcuts = getDefaultShortcuts()
+      }
+      this.shortcuts.globalEnabled = enabled
+    },
+    closeAutoLogin() {
+      this.login.autoLogin = false
+    },
+    /** 设置截图时是否隐藏窗口 */
+    setScreenshotConceal(isConceal: boolean) {
+      if (!this.screenshot) {
+        this.screenshot = { isConceal: false }
+      }
+      this.screenshot.isConceal = isConceal
+    },
+    /** 设置消息提示音开关 */
+    setMessageSoundEnabled(enabled: boolean) {
+      if (!this.notification) {
+        this.notification = { messageSound: true, volume: 80 }
+      } else if (typeof this.notification.volume !== 'number') {
+        this.notification.volume = 80
+      }
+      this.notification.messageSound = enabled
+    },
+    /** 设置消息提示音音量（0-100） */
+    setNotificationVolume(volume: number) {
+      if (!this.notification) {
+        this.notification = { messageSound: true, volume: 80 }
+      }
+      const normalized = Math.min(100, Math.max(0, Math.round(volume)))
+      this.notification.volume = normalized
     }
   },
   share: {

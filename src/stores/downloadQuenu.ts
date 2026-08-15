@@ -1,3 +1,4 @@
+import { save } from '@tauri-apps/plugin-dialog'
 import { defineStore } from 'pinia'
 import { useDownload } from '@/hooks/useDownload.ts'
 
@@ -14,7 +15,7 @@ export const useDownloadQuenuStore = defineStore('downloadQuenu', () => {
   // 下载队列
   const quenu = reactive<string[]>([])
   // 下载对象
-  const downloadObjMap = reactive<Map<string, DownloadObjType>>(new Map())
+  const downloadObjMap = reactive<Record<string, DownloadObjType>>({})
 
   // 添加到下载队列
   const addQuenuAction = (url: string) => {
@@ -31,7 +32,7 @@ export const useDownloadQuenuStore = defineStore('downloadQuenu', () => {
 
   // 出队列
   const dequeue = () => {
-    if (!quenu.length || downloadObjMap.size >= maxDownloadCount) {
+    if (!quenu.length || Object.keys(downloadObjMap).length >= maxDownloadCount) {
       return
     }
     const url = quenu.shift()
@@ -41,19 +42,42 @@ export const useDownloadQuenuStore = defineStore('downloadQuenu', () => {
   }
 
   // 下载
-  const downloadAction = (url: string) => {
+  const downloadAction = async (url: string) => {
     const { downloadFile, isDownloading, process, onLoaded } = useDownload()
-    const stopWatcher = watch(process, () => {
-      // 更新下载进度
-      downloadObjMap.set(url, { url, isDownloading: isDownloading.value, process: process.value })
-    })
-    onLoaded(() => {
-      stopWatcher() // 清除watcher
-      downloadObjMap.delete(url) // 下载完成后 删除下载对象
-      dequeue()
-    })
-    if (url) {
-      downloadFile(url)
+
+    try {
+      // 让用户选择保存路径
+      const savePath = (await save({
+        filters: [
+          {
+            name: '所有文件',
+            extensions: ['*']
+          }
+        ]
+      })) as string // 确保savePath是string类型
+
+      if (!savePath) {
+        // 用户取消了保存对话框
+        removeQuenuAction(url)
+        return
+      }
+
+      const stopWatcher = watch(process, () => {
+        // 更新下载进度
+        downloadObjMap[url] = { url, isDownloading: isDownloading.value, process: process.value }
+      })
+
+      onLoaded(() => {
+        stopWatcher() // 清除watcher
+        delete downloadObjMap[url] // 下载完成后 删除下载对象
+        dequeue()
+      })
+
+      await downloadFile(url, savePath)
+    } catch (error) {
+      console.error('保存失败:', error)
+      window.$message.error('保存失败')
+      removeQuenuAction(url)
     }
   }
 

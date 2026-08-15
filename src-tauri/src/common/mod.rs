@@ -1,3 +1,2 @@
-pub mod tray;
-pub mod window;
-pub mod plugins;
+pub mod files_meta;
+pub mod init;

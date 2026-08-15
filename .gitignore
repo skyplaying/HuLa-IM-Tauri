@@ -13,12 +13,27 @@ dist-ssr
 *.local
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.idea
+
+src-tauri/target
+
+.history/
+
+/coverage
+
+target
+.claude/
+.serena/
+*.sqlite
+db.sqlite
+.idea
+.qoder
+
+src/typings/components.pc.d.ts
+src/typings/components.mobile.d.ts

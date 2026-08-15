@@ -1,39 +1,52 @@
 <template>
-  <main class="flex-1 bg-[--right-bg-color] h-full w-100vw min-w-600px shadow-inner">
-    <ActionBar :current-label="appWindow.label" />
-    <!-- 需要判断当前路由是否是信息详情界面 -->
-    <ChatBox :active-item="activeItem" v-if="msgBoxShow && isChat && activeItem !== -1" />
+  <!-- 主容器维持 600px 的最小宽度，确保聊天侧边信息不过度挤压 -->
+  <main data-tauri-drag-region class="flex-1 bg-[--right-bg-color] flex flex-col min-h-0 min-w-600px">
+    <div
+      :style="{ background: shouldShowChat ? 'var(--right-theme-bg-color)' : '' }"
+      data-tauri-drag-region
+      class="flex-1 flex flex-col min-h-0">
+      <ActionBar :current-label="appWindow.label" />
 
-    <Details :content="DetailsContent" v-else-if="detailsShow && isDetails" />
+      <!-- 需要判断当前路由是否是信息详情界面 -->
+      <div class="flex-1 min-h-0 flex flex-col">
+        <ChatBox v-if="shouldShowChat" />
 
-    <!-- 聊天界面背景图标 -->
-    <div v-else class="flex-center size-full select-none">
-      <img v-if="imgTheme === ThemeEnum.DARK" class="w-130px h-100px" src="@/assets/img/hula_bg_dark.png" alt="" />
-      <img v-else class="w-130px h-100px" src="@/assets/img/hula_bg_light.png" alt="" />
+        <Details :content="detailsContent" v-else-if="detailsShow && isDetails && detailsContent?.type !== 'apply'" />
+
+        <!-- 好友申请列表 -->
+        <ApplyList
+          v-else-if="detailsContent && isDetails && detailsContent.type === 'apply'"
+          :type="detailsContent.applyType" />
+
+        <!-- 聊天界面背景图标 -->
+        <div v-else class="flex-center size-full select-none">
+          <img class="w-150px h-140px" src="/logoD.png" alt="" />
+        </div>
+      </div>
     </div>
   </main>
 </template>
 <script setup lang="ts">
-import Mitt from '@/utils/Bus.ts'
-import router from '@/router'
-import { setting } from '@/stores/setting.ts'
-import { storeToRefs } from 'pinia'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { MittEnum, ThemeEnum } from '@/enums'
-import { appWindow } from '@tauri-apps/api/window'
+import { useMitt } from '@/hooks/useMitt.ts'
+import router from '@/router'
+import type { DetailsContent } from '@/services/types'
+import { useSettingStore } from '@/stores/setting.ts'
+import { useGlobalStore } from '@/stores/global'
 
-const settingStore = setting()
+const appWindow = WebviewWindow.getCurrent()
+const settingStore = useSettingStore()
 const { themes } = storeToRefs(settingStore)
-const msgBoxShow = ref(false)
+const globalStore = useGlobalStore()
+const { currentSessionRoomId } = storeToRefs(globalStore)
 const detailsShow = ref(false)
-const activeItem = ref()
-const DetailsContent = ref()
-const imgTheme = ref(themes.value.content)
+const detailsContent = ref<DetailsContent>()
+const imgTheme = ref<ThemeEnum>(themes.value.content)
 const prefers = matchMedia('(prefers-color-scheme: dark)')
-// 判断当前路由是否是聊天界面
-const isChat = computed(() => {
-  return router.currentRoute.value.path.includes('/message')
-})
-// 判断当前路由是否是信息详情界面
+const isChatRoute = computed(() => router.currentRoute.value.path.includes('/message'))
+// 只要路由在消息页且选中了会话（即便会话详情尚未同步），就展示 ChatBox
+const shouldShowChat = computed(() => isChatRoute.value && !!currentSessionRoomId.value)
 const isDetails = computed(() => {
   return router.currentRoute.value.path.includes('/friendsList')
 })
@@ -54,20 +67,13 @@ watchEffect(() => {
 })
 
 onMounted(() => {
-  Mitt.on(MittEnum.NOT_MSG, () => {
-    msgBoxShow.value = false
-    activeItem.value = -1
-  })
-  if (isChat) {
-    Mitt.on(MittEnum.MSG_BOX_SHOW, (event: any) => {
-      msgBoxShow.value = event.msgBoxShow
-      activeItem.value = event.item
-    })
-  }
-
+  // 好友详情页面通过 mitt 接收主体传来的选中信息
   if (isDetails) {
-    Mitt.on(MittEnum.DETAILS_SHOW, (event: any) => {
-      DetailsContent.value = event.context
+    useMitt.on(MittEnum.APPLY_SHOW, (event: { context: DetailsContent }) => {
+      detailsContent.value = event.context
+    })
+    useMitt.on(MittEnum.DETAILS_SHOW, (event: any) => {
+      detailsContent.value = event.context
       detailsShow.value = event.detailsShow as boolean
     })
   }
